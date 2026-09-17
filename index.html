@@ -6,8 +6,9 @@
 <title>스탑 타이머</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@500;700&display=swap" rel="stylesheet">
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script>window.onerror=function(m,src,line){document.addEventListener('DOMContentLoaded',function(){var h=document.getElementById('s-home');h.classList.add('on');var e=document.getElementById('cfg-err');e.style.display='block';e.textContent='코드 오류 (줄 '+line+'): '+m+' — index.html 상단 FIREBASE_CONFIG 붙여넣기 부분의 중괄호/쉼표를 확인하세요.';});};</script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-app-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-database-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <style>
 :root{
@@ -172,6 +173,7 @@ ol.list li.me .nm{color:var(--hot)}
   </div>
 </section>
 
+<div class="note" style="position:fixed;bottom:6px;right:10px;opacity:.5" id="ver">v5 · firebase</div>
 <!-- QR 모달 -->
 <div class="modal" id="modal">
   <div class="code" id="m-code"></div>
@@ -181,15 +183,15 @@ ol.list li.me .nm{color:var(--hot)}
 </div>
 
 <script>
-const firebaseConfig = {
+/* Firebase 설정 (luckytimer-bc1ef) */
+const FIREBASE_CONFIG = {
   apiKey: "AIzaSyDLtyx07O2maxkYZJ9FkCMSaKJmQxtD_UU",
   authDomain: "luckytimer-bc1ef.firebaseapp.com",
   databaseURL: "https://luckytimer-bc1ef-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "luckytimer-bc1ef",
   storageBucket: "luckytimer-bc1ef.firebasestorage.app",
   messagingSenderId: "516216491922",
-  appId: "1:516216491922:web:793937e0185def7394bb4b",
-  measurementId: "G-KVRDV9ND9F"
+  appId: "1:516216491922:web:793937e0185def7394bb4b"
 };
 
 const $ = id => document.getElementById(id);
@@ -207,8 +209,10 @@ function initDb(){
     $('cfg-err').textContent = 'index.html 상단의 FIREBASE_CONFIG 가 아직 비어 있습니다. Firebase 콘솔의 firebaseConfig 값을 붙여넣어 주세요.';
     return false;
   }
-  firebase.initializeApp(FIREBASE_CONFIG);
-  db = firebase.database();
+  if (typeof firebase==='undefined'){ show('s-home'); $('cfg-err').style.display='block'; $('cfg-err').textContent='Firebase 라이브러리를 불러오지 못했습니다. 네트워크/보안 프로그램이 cdn.jsdelivr.net 을 막고 있는지 확인해 주세요.'; return false; }
+  try { firebase.initializeApp(FIREBASE_CONFIG); db = firebase.database(); }
+  catch(e){ show('s-home'); $('cfg-err').style.display='block'; $('cfg-err').textContent='Firebase 초기화 실패: '+e.message; return false; }
+  db.ref('.info/connected').on('value', s => { $('ver').textContent = 'v5 · firebase ' + (s.val()?'연결됨':'연결 안 됨'); });
   return true;
 }
 
@@ -317,7 +321,10 @@ function startJoin(code){
     if (!name){ $('i-name').focus(); return; }
     $('b-join').disabled = true; $('b-join').textContent = '연결 중…';
     try {
-      const snap = await db.ref('rooms/'+code).get();
+      const snap = await Promise.race([
+        db.ref('rooms/'+code).get(),
+        new Promise((_,rej)=>setTimeout(()=>rej(new Error('Firebase 데이터베이스에 연결되지 않습니다. FIREBASE_CONFIG의 databaseURL이 맞는지, Realtime Database가 생성됐는지 확인해 주세요. (URL: '+FIREBASE_CONFIG.databaseURL+')')),10000))
+      ]);
       if (!snap.exists()) throw new Error('방 '+code+'이 열려 있지 않습니다. 운영진 화면을 확인해 주세요.');
       startPlayer(code, name, snap.val());
     } catch(e){
