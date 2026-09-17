@@ -6,7 +6,8 @@
 <title>스탑 타이머</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@500;700&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <style>
 :root{
@@ -85,6 +86,7 @@ ol.list li.me .nm{color:var(--hot)}
   <div class="row" style="margin-top:10px">
     <input type="text" id="i-fixed" placeholder="방 코드 고정 (선택, 4자리)" maxlength="4" autocapitalize="characters" autocomplete="off">
   </div>
+  <div class="err" id="cfg-err" style="display:none"></div>
   <p class="note">코드를 고정하면 QR을 미리 만들어 둘 수 있습니다. 예: 코드 GAME → 주소 끝에 <b>?room=GAME</b></p>
   <div class="card">
     <h2>참가자로 들어가기</h2>
@@ -179,265 +181,243 @@ ol.list li.me .nm{color:var(--hot)}
 </div>
 
 <script>
+const firebaseConfig = {
+  apiKey: "AIzaSyDLtyx07O2maxkYZJ9FkCMSaKJmQxtD_UU",
+  authDomain: "luckytimer-bc1ef.firebaseapp.com",
+  databaseURL: "https://luckytimer-bc1ef-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "luckytimer-bc1ef",
+  storageBucket: "luckytimer-bc1ef.firebasestorage.app",
+  messagingSenderId: "516216491922",
+  appId: "1:516216491922:web:793937e0185def7394bb4b",
+  measurementId: "G-KVRDV9ND9F"
+};
+
 const $ = id => document.getElementById(id);
-const PREFIX = 'stoptimer-room-';
 const fmt = ms => (ms/1000).toFixed(3);
 const show = id => { document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on')); $(id).classList.add('on'); };
 const joinUrl = code => location.origin + location.pathname + '?room=' + code;
 const HIDE_BEFORE = 1000; // 목표 1초 전부터 카운트 숨김
-// 직접 연결이 막힌 네트워크(회사망 등)용 무료 중계 서버
-const PEER_OPTS = { config: { iceServers: [
-  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
-  { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
-] } };
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const TS = firebase.database.ServerValue.TIMESTAMP;
 
-function drawQR(el, text, size){
-  el.innerHTML = '';
-  new QRCode(el, { text, width:size, height:size, correctLevel: QRCode.CorrectLevel.M });
+let db;
+function initDb(){
+  if (!FIREBASE_CONFIG.databaseURL || FIREBASE_CONFIG.databaseURL.includes('여기에')){
+    show('s-home'); $('cfg-err').style.display='block';
+    $('cfg-err').textContent = 'index.html 상단의 FIREBASE_CONFIG 가 아직 비어 있습니다. Firebase 콘솔의 firebaseConfig 값을 붙여넣어 주세요.';
+    return false;
+  }
+  firebase.initializeApp(FIREBASE_CONFIG);
+  db = firebase.database();
+  return true;
 }
+
+function drawQR(el, text, size){ el.innerHTML=''; new QRCode(el,{text,width:size,height:size,correctLevel:QRCode.CorrectLevel.M}); }
 function openModal(code){
-  $('m-code').textContent = code;
-  $('m-link').textContent = joinUrl(code);
+  $('m-code').textContent = code; $('m-link').textContent = joinUrl(code);
   drawQR($('m-qr'), joinUrl(code), Math.min(window.innerWidth-100, 320));
   $('modal').classList.add('on');
 }
 $('b-closemodal').onclick = () => $('modal').classList.remove('on');
 
-function renderList(ol, list, myName){
+function renderList(ol, list, myId){
   ol.innerHTML = list.map(r =>
-    `<li class="${r.name===myName?'me':''}"><span class="nm">${esc(r.name)}</span><span class="ms">${fmt(r.ms)}</span></li>`
+    `<li class="${r.id===myId?'me':''}"><span class="nm">${esc(r.name)}</span><span class="ms">${fmt(r.ms)}</span></li>`
   ).join('') || '<li><span class="nm" style="color:var(--muted);font-weight:400">아직 아무도 멈추지 않았습니다.</span></li>';
 }
 function renderPodium(el, top3, target){
-  const rk = ['🥇','🥈','🥉'];
-  el.innerHTML = top3.map((r,i) =>
+  const rk=['🥇','🥈','🥉'];
+  el.innerHTML = top3.map((r,i)=>
     `<div class="pod p${i+1}"><div class="rk">${rk[i]}</div><div class="nm">${esc(r.name)}</div>
-     <div class="ms">${fmt(r.ms)}</div><div class="df">${r.ms>=target?'+':'-'}${fmt(Math.abs(r.ms-target))}</div></div>`
-  ).join('');
+     <div class="ms">${fmt(r.ms)}</div><div class="df">${r.ms>=target?'+':'-'}${fmt(Math.abs(r.ms-target))}</div></div>`).join('');
 }
-const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// players 객체 → 배열
+const toArr = obj => Object.entries(obj||{}).map(([id,p])=>({id,...p}));
+const stopList = players => toArr(players).filter(p=>p.ms!=null).sort((a,b)=>(a.stopAt||0)-(b.stopAt||0));
+const top3Of = (players, target) => stopList(players).sort((a,b)=>Math.abs(a.ms-target)-Math.abs(b.ms-target)).slice(0,3).map(p=>({id:p.id,name:p.name,ms:p.ms}));
 
 /* ───────────── 운영진 ───────────── */
 function startHost(fixed){
   show('s-host');
-  const players = new Map(); // conn.peer -> {name, conn, ms, late, on}
-  let phase = 'lobby', target = 0, startAt = 0, raf = 0, code = '', peer;
-
   const newCode = () => { const A='ABCDEFGHJKMNPQRSTUVWXYZ23456789'; let c=''; for(let i=0;i<4;i++) c+=A[Math.floor(Math.random()*A.length)]; return c; };
+  const code = fixed || newCode();
+  const ref = db.ref('rooms/'+code);
+  let room = { phase:'lobby' }, raf = 0, startAt = 0, finishing = false;
 
-  function open(){
-    code = fixed || newCode();
-    peer = new Peer(PREFIX + code, PEER_OPTS);
-    peer.on('open', () => {
-      $('h-code').textContent = code;
-      $('h-link').textContent = joinUrl(code);
+  // 방 생성(같은 코드 재사용 시 이전 데이터 초기화)
+  ref.set({ phase:'lobby', target: Math.round(parseFloat($('i-target').value)*1000), createdAt: TS, players: null, top3: null })
+    .then(()=>{
+      $('h-code').textContent = code; $('h-link').textContent = joinUrl(code);
       drawQR($('h-qr'), joinUrl(code), 200);
-      $('h-status').textContent = '참가자에게 QR을 보여주세요. 이 화면은 게임이 끝날 때까지 켜두세요.';
-    });
-    peer.on('error', e => {
-      if (e.type === 'unavailable-id') {
-        if (fixed) { $('h-status').textContent = '코드 ' + fixed + ' 방이 이미 열려 있습니다. 다른 기기의 운영진 화면을 닫고 새로고침하세요.'; $('h-code').textContent = fixed; return; }
-        peer.destroy(); open(); return;
-      }
-      $('h-status').textContent = '연결 오류: ' + e.type + ' (새로고침해 보세요)';
-    });
-    peer.on('connection', conn => {
-      conn.on('data', m => onData(conn, m));
-      conn.on('close', () => { const p = players.get(conn.peer); if (p){ p.on=false; renderPlayers(); broadcastPlayers(); checkAllStopped(); } });
-    });
-  }
-  open();
+      $('h-status').textContent = '참가자에게 QR을 보여주세요.';
+    })
+    .catch(e => { $('h-status').textContent = '방 생성 실패: ' + e.message + ' (Firebase 규칙이 읽기/쓰기 허용인지 확인)'; });
 
-  const send = (conn, m) => { try { if (conn.open) conn.send(m); } catch(e){} };
-  const broadcast = m => players.forEach(p => p.on && send(p.conn, m));
-  const stopList = () => [...players.values()].filter(p=>p.ms!=null).sort((a,b)=>a.order-b.order).map(p=>({name:p.name, ms:p.ms}));
-  const playerNames = () => [...players.values()].filter(p=>p.on).map(p=>p.name);
-  const curTarget = () => Math.round(parseFloat($('i-target').value||'0')*1000);
+  $('i-target').addEventListener('input', () => {
+    if (room.phase==='lobby') ref.update({ target: Math.round(parseFloat($('i-target').value||'0')*1000) });
+  });
 
-  function onData(conn, m){
-    if (m.t === 'join'){
-      const name = String(m.name||'익명').slice(0,12);
-      players.set(conn.peer, { name, conn, ms:null, order:0, late: phase!=='lobby', on:true });
-      send(conn, { t:'welcome', phase, target: phase==='lobby'?curTarget():target, list: stopList(), late: phase!=='lobby', players: playerNames(), top3: lastTop3 });
-      renderPlayers(); broadcastPlayers();
-    }
-    if (m.t === 'stop' && phase === 'running'){
-      const p = players.get(conn.peer);
-      if (!p || p.late || p.ms != null) return;
-      p.ms = Math.max(0, Math.round(m.ms)); p.order = ++orderSeq;
-      renderList($('h-list'), stopList());
-      renderPlayers();
-      broadcast({ t:'results', list: stopList() });
-      checkAllStopped();
-    }
-  }
-  let orderSeq = 0, lastTop3 = null;
-
-  function broadcastPlayers(){ broadcast({ t:'players', players: playerNames(), target: phase==='lobby'?curTarget():target }); }
-  $('i-target').addEventListener('input', () => { if (phase==='lobby') broadcastPlayers(); });
-
-  function renderPlayers(){
-    const arr = [...players.values()];
+  ref.on('value', snap => {
+    room = snap.val() || { phase:'lobby' };
+    const players = room.players || {};
+    const arr = toArr(players);
     $('h-count').textContent = arr.filter(p=>p.on).length;
     $('h-players').innerHTML = arr.map(p =>
       `<span class="chip ${p.ms!=null?'done':''} ${!p.on?'off':''}">${esc(p.name)}${p.late?' (다음 판)':''}</span>`
     ).join('') || '<span class="note">QR을 스캔하면 여기에 나타납니다.</span>';
-  }
-
-  function checkAllStopped(){
-    if (phase !== 'running') return;
-    const active = [...players.values()].filter(p=>p.on && !p.late);
-    if (active.length && active.every(p=>p.ms!=null)) finish();
-  }
+    renderList($('h-list'), stopList(players));
+    if (room.top3){ renderPodium($('h-podium'), room.top3, room.target); $('h-result').style.display = room.top3.length?'block':'none'; }
+    else $('h-result').style.display='none';
+    // 전원 스탑 → 자동 결과
+    if (room.phase==='running' && !finishing){
+      const active = arr.filter(p=>p.on && !p.late);
+      if (active.length && active.every(p=>p.ms!=null)) finish();
+    }
+  });
 
   $('b-start').onclick = () => {
-    target = curTarget();
-    if (!target || target < 1000){ alert('목표 시간을 1초 이상으로 입력하세요.'); return; }
-    phase = 'running'; orderSeq = 0; lastTop3 = null;
-    players.forEach(p => { p.ms=null; p.late = !p.on; });
-    $('h-setup').style.display='none'; $('h-run').style.display='block'; $('h-result').style.display='none';
-    $('h-target').textContent = fmt(target) + 's';
-    renderList($('h-list'), []); renderPlayers();
-    broadcast({ t:'start', target });
+    const target = Math.round(parseFloat($('i-target').value||'0')*1000);
+    if (!target || target<1000){ alert('목표 시간을 1초 이상으로 입력하세요.'); return; }
+    finishing = false;
+    const upd = { phase:'running', target, startAt: TS, top3: null };
+    toArr(room.players).forEach(p => { upd['players/'+p.id+'/ms']=null; upd['players/'+p.id+'/stopAt']=null; upd['players/'+p.id+'/late']=!p.on; });
+    ref.update(upd);
+    $('h-setup').style.display='none'; $('h-run').style.display='block';
+    $('h-target').textContent = fmt(target)+'s';
     startAt = performance.now();
     const tick = () => { $('h-timer').textContent = fmt(performance.now()-startAt); raf = requestAnimationFrame(tick); };
     tick();
   };
-
   function finish(){
-    if (phase !== 'running') return;
-    phase = 'done'; cancelAnimationFrame(raf);
-    $('h-timer').textContent = fmt(target);
-    const top3 = stopList().sort((a,b)=>Math.abs(a.ms-target)-Math.abs(b.ms-target)).slice(0,3);
-    lastTop3 = top3;
-    renderPodium($('h-podium'), top3, target);
-    $('h-result').style.display = top3.length ? 'block' : 'none';
-    broadcast({ t:'result', top3, target });
+    if (room.phase!=='running' || finishing) return;
+    finishing = true; cancelAnimationFrame(raf);
+    $('h-timer').textContent = fmt(room.target);
+    ref.update({ phase:'done', top3: top3Of(room.players, room.target) });
   }
   $('b-finish').onclick = finish;
-
   $('b-reset').onclick = () => {
-    phase = 'lobby'; cancelAnimationFrame(raf); lastTop3 = null;
-    players.forEach(p => { p.ms=null; p.late=false; });
-    [...players.entries()].forEach(([k,p]) => { if (!p.on) players.delete(k); });
-    $('h-setup').style.display='block'; $('h-run').style.display='none'; $('h-result').style.display='none';
-    $('h-timer').textContent = '0.000';
-    renderList($('h-list'), []); renderPlayers();
-    broadcast({ t:'reset', target: curTarget() });
+    cancelAnimationFrame(raf); finishing = false;
+    const upd = { phase:'lobby', top3:null, startAt:null };
+    toArr(room.players).forEach(p => {
+      if (!p.on) upd['players/'+p.id] = null;
+      else { upd['players/'+p.id+'/ms']=null; upd['players/'+p.id+'/stopAt']=null; upd['players/'+p.id+'/late']=false; }
+    });
+    ref.update(upd);
+    $('h-setup').style.display='block'; $('h-run').style.display='none'; $('h-timer').textContent='0.000';
   };
-
   $('b-hostqr').onclick = () => openModal(code);
-  renderList($('h-list'), []);
 }
 
 /* ───────────── 참가자 ───────────── */
 function startJoin(code){
   code = code.toUpperCase();
-  show('s-join'); $('j-code').textContent = code;
-  $('i-name').focus();
-  $('b-join').onclick = () => {
+  show('s-join'); $('j-code').textContent = code; $('i-name').focus();
+  $('b-join').onclick = async () => {
     const name = $('i-name').value.trim();
     if (!name){ $('i-name').focus(); return; }
     $('b-join').disabled = true; $('b-join').textContent = '연결 중…';
-    startPlayer(code, name);
+    try {
+      const snap = await db.ref('rooms/'+code).get();
+      if (!snap.exists()) throw new Error('방 '+code+'이 열려 있지 않습니다. 운영진 화면을 확인해 주세요.');
+      startPlayer(code, name, snap.val());
+    } catch(e){
+      $('j-err').style.display='block'; $('j-err').textContent = e.message;
+      $('b-join').disabled=false; $('b-join').textContent='입장하기';
+    }
   };
   $('i-name').addEventListener('keydown', e => { if (e.key==='Enter') $('b-join').click(); });
 }
 
-function startPlayer(code, name){
-  const peer = new Peer(PEER_OPTS);
-  let conn, startAt = 0, raf = 0, target = 0, stopped = false, myMs = null, late = false;
+function startPlayer(code, name, initial){
+  const roomRef = db.ref('rooms/'+code);
+  // 새로고침해도 같은 참가자로 유지
+  const key = 'stoptimer-pid-'+code;
+  let pid = localStorage.getItem(key);
+  if (!pid){ pid = roomRef.child('players').push().key; localStorage.setItem(key, pid); }
+  const meRef = roomRef.child('players/'+pid);
+  const late = initial.phase !== 'lobby';
+  meRef.update({ name, on:true, late, joinedAt: TS });
+  meRef.child('on').onDisconnect().set(false);
+
+  show('s-player'); $('p-name').textContent = name; $('p-code').textContent = code;
   const timerEl = $('p-timer'), stopBtn = $('b-stop');
+  let raf=0, startAt=0, target=0, stopped=false, myMs=null, seenStart=null, isLate=late;
 
-  const fail = msg => { show('s-join'); $('j-err').style.display='block'; $('j-err').textContent = msg; $('b-join').disabled=false; $('b-join').textContent='입장하기'; };
+  roomRef.on('value', snap => {
+    const room = snap.val();
+    if (!room){ $('p-status').textContent='방이 닫혔습니다.'; stopBtn.disabled=true; return; }
+    target = room.target||0;
+    const me = (room.players||{})[pid] || {};
+    isLate = !!me.late;
+    renderList($('p-list'), stopList(room.players), pid);
+    const n = toArr(room.players).filter(p=>p.on).length;
 
-  peer.on('open', () => {
-    conn = peer.connect(PREFIX + code, { reliable: true });
-    const to = setTimeout(() => fail('방을 찾을 수 없습니다. 코드를 확인하고, 운영진 화면이 켜져 있는지 확인하세요.'), 8000);
-    conn.on('open', () => { clearTimeout(to); conn.send({ t:'join', name }); show('s-player'); $('p-name').textContent = name; $('p-code').textContent = code; });
-    conn.on('data', onData);
-    conn.on('close', () => { $('p-status').textContent = '운영진과 연결이 끊어졌습니다. 새로고침해서 다시 들어오세요.'; stopBtn.disabled = true; });
-    conn.on('error', e => { clearTimeout(to); fail('연결에 실패했습니다 (' + (e.type||e.message||'unknown') + '). 다시 시도해 주세요.'); });
-    conn.on('iceStateChanged', st => { if (st === 'failed') { clearTimeout(to); fail('네트워크가 직접 연결을 막고 있습니다. 폰의 Wi-Fi를 끄고 데이터로, 또는 다른 Wi-Fi로 다시 시도해 주세요.'); } });
-  });
-  peer.on('error', e => fail(e.type === 'peer-unavailable' ? '방 ' + code + '이 열려 있지 않습니다. 운영진 화면을 확인해 주세요.' : '연결 오류: ' + e.type));
-
-  function setWaiting(t){
-    target = t;
-    $('p-target').innerHTML = t ? `목표 <b>${fmt(t)}s</b> · 운영진이 시작하기를 기다리는 중` : '운영진이 시작하기를 기다리는 중';
-  }
-
-  function onData(m){
-    if (m.t === 'welcome'){
-      late = m.late; renderList($('p-list'), m.list, name);
-      if (m.phase === 'lobby') setWaiting(m.target);
-      else { target = m.target; $('p-target').innerHTML = `목표 <b>${fmt(target)}s</b>`; $('p-status').textContent = '이번 판은 이미 진행 중이라 다음 판부터 참여할 수 있어요.'; }
-      if (m.top3){ renderPodium($('p-podium'), m.top3, m.target); $('p-result').style.display='block'; }
-      $('p-status').textContent = late ? $('p-status').textContent : `${m.players.length}명 참가 중`;
+    if (room.phase==='lobby'){
+      cancelAnimationFrame(raf); startAt=0; seenStart=null; stopped=false; myMs=null;
+      timerEl.textContent='0.000'; timerEl.className='timer'; stopBtn.disabled=true;
+      $('p-result').style.display='none';
+      $('p-target').innerHTML = target ? `목표 <b>${fmt(target)}s</b> · 운영진이 시작하기를 기다리는 중` : '운영진이 시작하기를 기다리는 중';
+      $('p-status').textContent = `${n}명 참가 중`;
     }
-    if (m.t === 'players'){
-      if (!startAt && !late) { setWaiting(m.target); $('p-status').textContent = `${m.players.length}명 참가 중`; }
-    }
-    if (m.t === 'start' && !late){
-      target = m.target; stopped = false; myMs = null;
+    if (room.phase==='running'){
       $('p-target').innerHTML = `목표 <b>${fmt(target)}s</b>`;
-      $('p-status').textContent = ''; $('p-result').style.display='none';
-      renderList($('p-list'), [], name);
-      timerEl.className = 'timer'; stopBtn.disabled = false;
-      startAt = performance.now();
-      if (navigator.vibrate) navigator.vibrate(60);
-      const tick = () => {
-        const el = performance.now() - startAt;
-        if (el >= target - HIDE_BEFORE){ timerEl.textContent = '?.???'; timerEl.className = 'timer hidden'; }
-        else timerEl.textContent = fmt(el);
-        raf = requestAnimationFrame(tick);
-      };
-      tick();
+      if (isLate){ $('p-status').textContent='이번 판은 이미 진행 중이라 다음 판부터 참여할 수 있어요.'; return; }
+      if (me.ms!=null){ // 새로고침 후 복귀
+        stopped=true; myMs=me.ms; timerEl.textContent=fmt(myMs); timerEl.className='timer mine'; stopBtn.disabled=true;
+        $('p-status').textContent='기록 완료. 다른 참가자를 기다리는 중…'; return;
+      }
+      if (seenStart !== room.startAt){ // 시작 신호를 처음 받은 순간부터 로컬 측정
+        seenStart = room.startAt; stopped=false; myMs=null;
+        $('p-status').textContent=''; $('p-result').style.display='none';
+        timerEl.className='timer'; stopBtn.disabled=false;
+        if (navigator.vibrate) navigator.vibrate(60);
+        startAt = performance.now();
+        const tick = () => {
+          const el = performance.now()-startAt;
+          if (el >= target-HIDE_BEFORE){ timerEl.textContent='?.???'; timerEl.className='timer hidden'; }
+          else timerEl.textContent = fmt(el);
+          raf = requestAnimationFrame(tick);
+        };
+        tick();
+      }
     }
-    if (m.t === 'results') renderList($('p-list'), m.list, name);
-    if (m.t === 'result'){
-      cancelAnimationFrame(raf); startAt = 0; stopBtn.disabled = true;
-      if (myMs == null && !late){ timerEl.textContent = '—'; $('p-status').textContent = '시간 초과로 기록되지 않았습니다.'; }
-      renderPodium($('p-podium'), m.top3, m.target); $('p-result').style.display = m.top3.length ? 'block' : 'none';
-      const rank = m.top3.findIndex(r => r.name===name && r.ms===myMs);
-      if (rank >= 0) $('p-status').textContent = `🎉 ${rank+1}위! 목표와 ${fmt(Math.abs(myMs-m.target))}초 차이`;
+    if (room.phase==='done'){
+      cancelAnimationFrame(raf); startAt=0; stopBtn.disabled=true;
+      const top3 = room.top3||[];
+      renderPodium($('p-podium'), top3, target); $('p-result').style.display = top3.length?'block':'none';
+      if (!isLate && me.ms==null){ timerEl.textContent='—'; $('p-status').textContent='시간 초과로 기록되지 않았습니다.'; }
+      const rank = top3.findIndex(r=>r.id===pid);
+      if (rank>=0) $('p-status').textContent = `🎉 ${rank+1}위! 목표와 ${fmt(Math.abs(me.ms-target))}초 차이`;
+      else if (me.ms!=null) $('p-status').textContent = `내 기록 ${fmt(me.ms)}s · 목표와 ${fmt(Math.abs(me.ms-target))}초 차이`;
     }
-    if (m.t === 'reset'){
-      cancelAnimationFrame(raf); startAt = 0; stopped = false; myMs = null; late = false;
-      timerEl.textContent = '0.000'; timerEl.className = 'timer'; stopBtn.disabled = true;
-      $('p-result').style.display='none'; renderList($('p-list'), [], name);
-      setWaiting(m.target); $('p-status').textContent = '';
-    }
-  }
+  });
 
   const doStop = e => {
     if (e) e.preventDefault();
     if (stopped || !startAt) return;
-    stopped = true; myMs = Math.round(performance.now() - startAt);
+    stopped = true; myMs = Math.round(performance.now()-startAt);
     cancelAnimationFrame(raf); stopBtn.disabled = true;
-    timerEl.textContent = fmt(myMs); timerEl.className = 'timer mine';
+    timerEl.textContent = fmt(myMs); timerEl.className='timer mine';
     $('p-status').textContent = '기록 완료. 다른 참가자를 기다리는 중…';
     if (navigator.vibrate) navigator.vibrate(30);
-    conn.send({ t:'stop', ms: myMs });
+    meRef.update({ ms: myMs, stopAt: TS });
   };
   stopBtn.addEventListener('touchstart', doStop, { passive:false });
   stopBtn.addEventListener('click', doStop);
-
   $('b-playerqr').onclick = () => openModal(code);
-  renderList($('p-list'), [], name);
 }
 
 /* ───────────── 라우팅 ───────────── */
-const qs = new URLSearchParams(location.search);
-const room = qs.get('room'), hostCode = qs.get('host');
-if (room && room.length === 4) startJoin(room);
-else if (hostCode && hostCode.length === 4) startHost(hostCode.toUpperCase());
-else {
-  show('s-home');
-  $('b-create').onclick = () => { const f = $('i-fixed').value.trim().toUpperCase(); startHost(f.length===4 ? f : null); };
-  $('b-enter').onclick = () => { const c = $('i-code').value.trim(); if (c.length===4) { history.replaceState(null,'', '?room='+c.toUpperCase()); startJoin(c); } };
+if (initDb()){
+  const qs = new URLSearchParams(location.search);
+  const room = qs.get('room'), hostCode = qs.get('host');
+  if (room && room.length===4) startJoin(room);
+  else if (hostCode && hostCode.length===4) startHost(hostCode.toUpperCase());
+  else {
+    show('s-home');
+    $('b-create').onclick = () => { const f=$('i-fixed').value.trim().toUpperCase(); startHost(f.length===4?f:null); };
+    $('b-enter').onclick = () => { const c=$('i-code').value.trim(); if (c.length===4){ history.replaceState(null,'','?room='+c.toUpperCase()); startJoin(c); } };
+  }
 }
 </script>
 </body>
