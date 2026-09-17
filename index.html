@@ -185,6 +185,13 @@ const fmt = ms => (ms/1000).toFixed(3);
 const show = id => { document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on')); $(id).classList.add('on'); };
 const joinUrl = code => location.origin + location.pathname + '?room=' + code;
 const HIDE_BEFORE = 1000; // 목표 1초 전부터 카운트 숨김
+// 직접 연결이 막힌 네트워크(회사망 등)용 무료 중계 서버
+const PEER_OPTS = { config: { iceServers: [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+] } };
 
 function drawQR(el, text, size){
   el.innerHTML = '';
@@ -222,7 +229,7 @@ function startHost(fixed){
 
   function open(){
     code = fixed || newCode();
-    peer = new Peer(PREFIX + code);
+    peer = new Peer(PREFIX + code, PEER_OPTS);
     peer.on('open', () => {
       $('h-code').textContent = code;
       $('h-link').textContent = joinUrl(code);
@@ -340,7 +347,7 @@ function startJoin(code){
 }
 
 function startPlayer(code, name){
-  const peer = new Peer();
+  const peer = new Peer(PEER_OPTS);
   let conn, startAt = 0, raf = 0, target = 0, stopped = false, myMs = null, late = false;
   const timerEl = $('p-timer'), stopBtn = $('b-stop');
 
@@ -352,9 +359,10 @@ function startPlayer(code, name){
     conn.on('open', () => { clearTimeout(to); conn.send({ t:'join', name }); show('s-player'); $('p-name').textContent = name; $('p-code').textContent = code; });
     conn.on('data', onData);
     conn.on('close', () => { $('p-status').textContent = '운영진과 연결이 끊어졌습니다. 새로고침해서 다시 들어오세요.'; stopBtn.disabled = true; });
-    conn.on('error', () => { clearTimeout(to); fail('연결에 실패했습니다. 다시 시도해 주세요.'); });
+    conn.on('error', e => { clearTimeout(to); fail('연결에 실패했습니다 (' + (e.type||e.message||'unknown') + '). 다시 시도해 주세요.'); });
+    conn.on('iceStateChanged', st => { if (st === 'failed') { clearTimeout(to); fail('네트워크가 직접 연결을 막고 있습니다. 폰의 Wi-Fi를 끄고 데이터로, 또는 다른 Wi-Fi로 다시 시도해 주세요.'); } });
   });
-  peer.on('error', e => fail('연결 오류: ' + e.type));
+  peer.on('error', e => fail(e.type === 'peer-unavailable' ? '방 ' + code + '이 열려 있지 않습니다. 운영진 화면을 확인해 주세요.' : '연결 오류: ' + e.type));
 
   function setWaiting(t){
     target = t;
