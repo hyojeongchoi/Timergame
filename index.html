@@ -78,7 +78,10 @@ ol.list li.me .nm{color:var(--hot)}
 .rmodal{position:fixed;inset:0;background:rgba(5,30,27,.7);display:none;align-items:center;justify-content:center;padding:24px;z-index:15}
 .rmodal.on{display:flex}
 .rbox{background:var(--ink);color:var(--bg);border-radius:24px;padding:32px 24px;width:100%;max-width:360px;text-align:center;animation:pop .35s cubic-bezier(.2,1.4,.4,1)}
-.rbox.win{background:var(--hot);color:#2a1a00}
+.rbox.gold{background:linear-gradient(160deg,#ffe27a,#f5b800 55%,#d99a00);color:#3a2600}
+.rbox.silver{background:linear-gradient(160deg,#f4f6f8,#c9d0d8 55%,#a4adb8);color:#1f2730}
+.rbox.bronze{background:linear-gradient(160deg,#e8a874,#c47a3c 55%,#9a5a26);color:#2e1706}
+.rbox.gold .btn,.rbox.silver .btn,.rbox.bronze .btn{background:rgba(0,0,0,.75);color:#fff}
 .rbox .big{font-size:64px;line-height:1}
 .rbox h3{font-size:26px;font-weight:800;margin:10px 0 4px;letter-spacing:-.02em}
 .rbox .rank{font-family:var(--mono);font-size:44px;font-weight:700;margin:6px 0}
@@ -92,7 +95,7 @@ ol.list li.me .nm{color:var(--hot)}
 
 <!-- 홈 -->
 <section id="s-home" class="screen">
-  <h1>스탑 타이머</h1>
+  <h1>럭키 타이머</h1>
   <p class="sub">지정한 시간에 가장 가깝게 멈추는 사람이 이깁니다.</p>
   <button class="btn hot" id="b-create">방 만들기 (운영진)</button>
   <div class="row" style="margin-top:10px">
@@ -149,7 +152,7 @@ ol.list li.me .nm{color:var(--hot)}
   </div>
 
   <div class="card">
-    <h2>스탑 순서</h2>
+    <h2>럭키 순서</h2>
     <ol class="list" id="h-list"></ol>
   </div>
 </section>
@@ -183,12 +186,12 @@ ol.list li.me .nm{color:var(--hot)}
     <div class="podium" id="p-podium"></div>
   </div>
   <div class="card">
-    <h2>스탑 순서</h2>
+    <h2>럭키 순서</h2>
     <ol class="list" id="p-list"></ol>
   </div>
 </section>
 
-<div class="note" style="position:fixed;bottom:6px;right:10px;opacity:.5" id="ver">v7 · firebase</div>
+<div class="note" style="position:fixed;bottom:6px;right:10px;opacity:.5" id="ver">v8 · firebase</div>
 <canvas id="confetti"></canvas>
 <div class="rmodal" id="rmodal">
   <div class="rbox" id="rbox">
@@ -238,7 +241,7 @@ function initDb(){
   if (typeof firebase==='undefined'){ show('s-home'); $('cfg-err').style.display='block'; $('cfg-err').textContent='Firebase 라이브러리를 불러오지 못했습니다. 네트워크/보안 프로그램이 cdn.jsdelivr.net 을 막고 있는지 확인해 주세요.'; return false; }
   try { firebase.initializeApp(FIREBASE_CONFIG); db = firebase.database(); }
   catch(e){ show('s-home'); $('cfg-err').style.display='block'; $('cfg-err').textContent='Firebase 초기화 실패: '+e.message; return false; }
-  db.ref('.info/connected').on('value', s => { $('ver').textContent = 'v7 · firebase ' + (s.val()?'연결됨':'연결 안 됨'); });
+  db.ref('.info/connected').on('value', s => { $('ver').textContent = 'v8 · firebase ' + (s.val()?'연결됨':'연결 안 됨'); });
   return true;
 }
 
@@ -297,8 +300,8 @@ function confetti(strong){
   }
   requestAnimationFrame(frame);
 }
-function showResultPopup({win, emoji, title, rank, desc}){
-  $('rbox').className = 'rbox' + (win?' win':'');
+function showResultPopup({win, emoji, title, rank, desc, medal}){
+  $('rbox').className = 'rbox' + (medal ? ' '+medal : '');
   $('r-emoji').textContent = emoji; $('r-title').textContent = title;
   $('r-rank').textContent = rank; $('r-desc').textContent = desc;
   $('rmodal').classList.add('on');
@@ -339,7 +342,7 @@ function startHost(fixed){
     if (room.top3){ renderPodium($('h-podium'), room.top3, room.target); $('h-result').style.display = room.top3.length?'block':'none'; }
     else $('h-result').style.display='none';
     if (room.phase==='done' && room.top3 && celebrated!==room.startAt){ celebrated=room.startAt; confetti(true); }
-    // 전원 스탑 → 자동 결과
+    // 전원 럭키 → 자동 결과
     if (room.phase==='running' && !finishing){
       const active = arr.filter(p=>p.on && !p.late);
       if (active.length && active.every(p=>p.ms!=null)) finish();
@@ -477,7 +480,7 @@ function startPlayer(code, name, initial){
         const diff = me.ms!=null ? fmt(Math.abs(me.ms-target)) : null;
         if (rank>=0 && rank<3){
           confetti(true);
-          showResultPopup({ win:true, emoji:['🥇','🥈','🥉'][rank], title:'축하합니다!', rank:`${rank+1}위`,
+          showResultPopup({ win:true, medal:['gold','silver','bronze'][rank], emoji:['🥇','🥈','🥉'][rank], title:'축하합니다!', rank:`${rank+1}위`,
             desc:`${fmt(me.ms)}s 기록 · 목표 ${fmt(target)}s와 ${diff}초 차이` });
         } else if (rank>=0){
           showResultPopup({ win:false, emoji:'⏱️', title:'결과', rank:`${rank+1}위 / ${all.length}명`,
