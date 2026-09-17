@@ -163,6 +163,10 @@ ol.list li.me .nm{color:var(--hot)}
   <button class="stopbtn" id="b-stop" disabled>STOP</button>
   <div class="status" id="p-status"></div>
 
+  <div class="card" id="p-lobby">
+    <h2>참가자 <span id="p-count">0</span>명</h2>
+    <div class="chips" id="p-players"></div>
+  </div>
   <div class="card" id="p-result" style="display:none">
     <h2>가장 가까운 3명</h2>
     <div class="podium" id="p-podium"></div>
@@ -173,7 +177,7 @@ ol.list li.me .nm{color:var(--hot)}
   </div>
 </section>
 
-<div class="note" style="position:fixed;bottom:6px;right:10px;opacity:.5" id="ver">v5 · firebase</div>
+<div class="note" style="position:fixed;bottom:6px;right:10px;opacity:.5" id="ver">v6 · firebase</div>
 <!-- QR 모달 -->
 <div class="modal" id="modal">
   <div class="code" id="m-code"></div>
@@ -198,7 +202,8 @@ const $ = id => document.getElementById(id);
 const fmt = ms => (ms/1000).toFixed(3);
 const show = id => { document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on')); $(id).classList.add('on'); };
 const joinUrl = code => location.origin + location.pathname + '?room=' + code;
-const HIDE_BEFORE = 1000; // 목표 1초 전부터 카운트 숨김
+const FADE_FROM = 3000;   // 목표 3초 전부터 서서히 흐려짐
+const HIDE_BEFORE = 1000; // 목표 1초 전부터 완전히 숨김
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const TS = firebase.database.ServerValue.TIMESTAMP;
 
@@ -212,7 +217,7 @@ function initDb(){
   if (typeof firebase==='undefined'){ show('s-home'); $('cfg-err').style.display='block'; $('cfg-err').textContent='Firebase 라이브러리를 불러오지 못했습니다. 네트워크/보안 프로그램이 cdn.jsdelivr.net 을 막고 있는지 확인해 주세요.'; return false; }
   try { firebase.initializeApp(FIREBASE_CONFIG); db = firebase.database(); }
   catch(e){ show('s-home'); $('cfg-err').style.display='block'; $('cfg-err').textContent='Firebase 초기화 실패: '+e.message; return false; }
-  db.ref('.info/connected').on('value', s => { $('ver').textContent = 'v5 · firebase ' + (s.val()?'연결됨':'연결 안 됨'); });
+  db.ref('.info/connected').on('value', s => { $('ver').textContent = 'v6 · firebase ' + (s.val()?'연결됨':'연결 안 됨'); });
   return true;
 }
 
@@ -357,11 +362,15 @@ function startPlayer(code, name, initial){
     const me = (room.players||{})[pid] || {};
     isLate = !!me.late;
     renderList($('p-list'), stopList(room.players), pid);
-    const n = toArr(room.players).filter(p=>p.on).length;
+    const online = toArr(room.players).filter(p=>p.on);
+    const n = online.length;
+    $('p-lobby').style.display = room.phase==='lobby' ? 'block' : 'none';
+    $('p-count').textContent = n;
+    $('p-players').innerHTML = online.map(p=>`<span class="chip ${p.id===pid?'done':''}">${esc(p.name)}</span>`).join('') || '<span class="note">아직 아무도 없습니다.</span>';
 
     if (room.phase==='lobby'){
       cancelAnimationFrame(raf); startAt=0; seenStart=null; stopped=false; myMs=null;
-      timerEl.textContent='0.000'; timerEl.className='timer'; stopBtn.disabled=true;
+      timerEl.textContent='0.000'; timerEl.className='timer'; timerEl.style.opacity=''; stopBtn.disabled=true;
       $('p-result').style.display='none';
       $('p-target').innerHTML = target ? `목표 <b>${fmt(target)}s</b> · 운영진이 시작하기를 기다리는 중` : '운영진이 시작하기를 기다리는 중';
       $('p-status').textContent = `${n}명 참가 중`;
@@ -381,8 +390,12 @@ function startPlayer(code, name, initial){
         startAt = performance.now();
         const tick = () => {
           const el = performance.now()-startAt;
-          if (el >= target-HIDE_BEFORE){ timerEl.textContent='?.???'; timerEl.className='timer hidden'; }
-          else timerEl.textContent = fmt(el);
+          if (el >= target-HIDE_BEFORE){ timerEl.textContent='?.???'; timerEl.className='timer hidden'; timerEl.style.opacity=''; }
+          else {
+            timerEl.textContent = fmt(el);
+            const remain = (target-HIDE_BEFORE) - el;          // 완전히 숨겨지기까지 남은 ms
+            timerEl.style.opacity = Math.min(1, Math.max(0.04, remain/(FADE_FROM-HIDE_BEFORE)));
+          }
           raf = requestAnimationFrame(tick);
         };
         tick();
@@ -392,7 +405,7 @@ function startPlayer(code, name, initial){
       cancelAnimationFrame(raf); startAt=0; stopBtn.disabled=true;
       const top3 = room.top3||[];
       renderPodium($('p-podium'), top3, target); $('p-result').style.display = top3.length?'block':'none';
-      if (!isLate && me.ms==null){ timerEl.textContent='—'; $('p-status').textContent='시간 초과로 기록되지 않았습니다.'; }
+      timerEl.style.opacity=''; if (!isLate && me.ms==null){ timerEl.textContent='—'; $('p-status').textContent='시간 초과로 기록되지 않았습니다.'; }
       const rank = top3.findIndex(r=>r.id===pid);
       if (rank>=0) $('p-status').textContent = `🎉 ${rank+1}위! 목표와 ${fmt(Math.abs(me.ms-target))}초 차이`;
       else if (me.ms!=null) $('p-status').textContent = `내 기록 ${fmt(me.ms)}s · 목표와 ${fmt(Math.abs(me.ms-target))}초 차이`;
@@ -404,7 +417,7 @@ function startPlayer(code, name, initial){
     if (stopped || !startAt) return;
     stopped = true; myMs = Math.round(performance.now()-startAt);
     cancelAnimationFrame(raf); stopBtn.disabled = true;
-    timerEl.textContent = fmt(myMs); timerEl.className='timer mine';
+    timerEl.textContent = fmt(myMs); timerEl.className='timer mine'; timerEl.style.opacity='';
     $('p-status').textContent = '기록 완료. 다른 참가자를 기다리는 중…';
     if (navigator.vibrate) navigator.vibrate(30);
     meRef.update({ ms: myMs, stopAt: TS });
